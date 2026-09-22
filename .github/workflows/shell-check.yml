@@ -25,7 +25,7 @@ jobs:
       - name: Install analysis tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes shellcheck shfmt
+          sudo apt-get install --yes shellcheck shfmt ripgrep
 
       - name: Check Bash syntax
         shell: bash
@@ -68,6 +68,7 @@ jobs:
           tests/test-maintainer-config.sh
           tests/test-shell-messages.sh
           tests/test-binder-lock.sh
+          tests/test-binder-package-kernel.sh
           tests/test-package-transaction.sh
           tests/test-rootfs-package-ownership.sh
           tests/test-bundle-compatibility.sh

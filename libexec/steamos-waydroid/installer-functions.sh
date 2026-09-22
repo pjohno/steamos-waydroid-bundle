@@ -148,6 +148,78 @@ commit_new_android_image() {
 	mv -- "$staged_image" "$WAYDROID_IMAGE"
 }
 
+binder_package_kernel_release() {
+	local package=$1
+	local archive_listing
+	local -a releases=()
+
+	if [[ ! -f "$package" ]]; then
+		printf 'Binder package is missing: %s\n' "$package" >&2
+		return 1
+	fi
+
+	if ! archive_listing=$(bsdtar -tf "$package"); then
+		printf 'Could not inspect Binder package: %s\n' "$package" >&2
+		return 1
+	fi
+
+	mapfile -t releases < <(
+		awk '
+			{
+				path = $0
+				sub(/^\.\//, "", path)
+				count = split(path, part, "/")
+
+				if (count < 5)
+					next
+				if (part[1] != "usr")
+					next
+				if (part[2] != "lib")
+					next
+				if (part[3] != "modules")
+					next
+				if (part[count] !~ /^binder_linux\.ko(\.(zst|xz|gz|lz4))?$/)
+					next
+
+				print part[4]
+			}
+			' <<<"$archive_listing" |
+			sort -u
+	)
+
+	case "${#releases[@]}" in
+	1)
+		printf '%s\n' "${releases[0]}"
+		;;
+	0)
+		printf \
+			'Binder package does not contain binder_linux under usr/lib/modules/<kernel>: %s\n' \
+			"$package" >&2
+		return 1
+		;;
+	*)
+		printf 'Binder package contains modules for multiple kernel releases:\n' >&2
+		printf '  %s\n' "${releases[@]}" >&2
+		return 1
+		;;
+	esac
+}
+
+validate_binder_kernel_match() {
+	local binder_package_kernel=$1
+	local running_kernel_release=$2
+
+	if [ "$binder_package_kernel" != "$running_kernel_release" ]; then
+		printf 'Bundled Binder module targets kernel %s.\n' \
+			"$binder_package_kernel" >&2
+		printf 'Running kernel is %s.\n' \
+			"$running_kernel_release" >&2
+		printf '%s\n' \
+			'Refusing to install a Binder module built for a different kernel.' >&2
+		return 1
+	fi
+}
+
 verify_pacman_transaction_dependencies() {
 	local package_file metadata_name planned_name planned_repository planned_version
 	local transaction_output

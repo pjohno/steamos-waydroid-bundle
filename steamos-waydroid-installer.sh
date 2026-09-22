@@ -281,6 +281,47 @@ if ! "$BUNDLE_TARGET_CHECK" "${target_check_args[@]}"; then
 	exit 1
 fi
 
+# Validate Binder compatibility before requesting sudo or changing SteamOS.
+running_kernel_release=$(uname -r)
+
+shopt -s nullglob
+binder_packages=(
+	"$HOST_PACKAGE_ROOT"/steamos-waydroid-binder-*.pkg.tar.zst
+)
+shopt -u nullglob
+
+if [ "${#binder_packages[@]}" -gt 1 ]; then
+	echo The target-built bundle contains multiple steamos-waydroid-binder packages. >&2
+	exit 1
+fi
+
+binder_builtin=false
+binder_package_kernel=""
+
+if running_kernel_has_builtin_binder; then
+	binder_builtin=true
+	echo "Running SteamOS kernel $running_kernel_release provides built-in Binder support."
+elif [ "${#binder_packages[@]}" -eq 0 ]; then
+	echo "Running kernel $running_kernel_release does not provide built-in Binder support." >&2
+	echo "The selected bundle does not contain a steamos-waydroid-binder package." >&2
+	echo "Build and publish a Binder package for the running kernel before continuing." >&2
+	exit 1
+else
+	if ! binder_package_kernel=$(
+		binder_package_kernel_release "${binder_packages[0]}"
+	); then
+		exit 1
+	fi
+
+	if ! validate_binder_kernel_match \
+		"$binder_package_kernel" \
+		"$running_kernel_release"; then
+		exit 1
+	fi
+
+	echo "Bundled Binder module matches running kernel $running_kernel_release."
+fi
+
 abort_run() {
 	if [ "$TEST_INSTALL_MODE" = true ]; then
 		cleanup_failed_test_environment
@@ -561,33 +602,18 @@ host_packages=(
 	"$HOST_PACKAGE_ROOT"/waydroid*.zst
 )
 
-shopt -s nullglob
-binder_packages=(
-	"$HOST_PACKAGE_ROOT"/steamos-waydroid-binder-*.pkg.tar.zst
-)
-shopt -u nullglob
-
-if [ "${#binder_packages[@]}" -gt 1 ]; then
-	echo The target-built bundle contains multiple steamos-waydroid-binder packages. >&2
-	abort_run
-fi
-
 binder_package_installed=false
-if running_kernel_has_builtin_binder; then
-	echo Running SteamOS kernel provides built-in Binder support.
-	binder_builtin=true
-else
-	binder_builtin=false
-fi
 
-if [ "${#binder_packages[@]}" -eq 1 ] && [ "$binder_builtin" = true ]; then
-	echo Skipping the bundled Binder package because the running kernel provides Binder itself.
-elif [ "${#binder_packages[@]}" -eq 1 ]; then
-	echo "Target bundle supplies steamos-waydroid-binder for kernel $(uname -r)."
+if [ "$binder_builtin" = true ]; then
+	if [ "${#binder_packages[@]}" -eq 1 ]; then
+		echo "Skipping bundled Binder package because kernel $running_kernel_release provides Binder itself."
+	else
+		echo "Using built-in Binder support from kernel $running_kernel_release."
+	fi
+else
+	echo "Installing bundled Binder module for kernel $binder_package_kernel."
 	host_packages+=("${binder_packages[0]}")
 	binder_package_installed=true
-else
-	echo Target bundle does not require a separate Binder kernel module.
 fi
 
 echo Resolving package dependencies against the configured SteamOS repositories.
@@ -607,17 +633,17 @@ if { printf '%s\n' "$current_password" |
 		echo "*** depmod binder_linux ***" >>"$LOGFILE"
 
 		if ! { printf '%s\n' "$current_password" |
-			sudo -S depmod -a "$(uname -r)"; } >>"$LOGFILE" 2>&1; then
+			sudo -S depmod -a "$running_kernel_release"; } >>"$LOGFILE" 2>&1; then
 			echo Error running depmod for the bundled Binder kernel module. >&2
 			abort_run
 		fi
 
-		if ! modinfo -k "$(uname -r)" binder_linux >>"$LOGFILE" 2>&1; then
+		if ! modinfo -k "$running_kernel_release" binder_linux >>"$LOGFILE" 2>&1; then
 			echo The bundled binder_linux module was installed but cannot be found by modinfo. >&2
 			abort_run
 		fi
 
-		echo "Binder module registered: $(modinfo -k "$(uname -r)" -F filename binder_linux)"
+		echo "Binder module registered: $(modinfo -k "$running_kernel_release" -F filename binder_linux)"
 	fi
 
 	printf '%s\n' "$current_password" |
