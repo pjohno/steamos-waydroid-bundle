@@ -205,6 +205,21 @@ binder_package_kernel_release() {
 	esac
 }
 
+validate_binder_kernel_match() {
+	local binder_package_kernel=$1
+	local running_kernel_release=$2
+
+	if [ "$binder_package_kernel" != "$running_kernel_release" ]; then
+		printf 'Bundled Binder module targets kernel %s.\n' \
+			"$binder_package_kernel" >&2
+		printf 'Running kernel is %s.\n' \
+			"$running_kernel_release" >&2
+		printf '%s\n' \
+			'Refusing to install a Binder module built for a different kernel.' >&2
+		return 1
+	fi
+}
+
 verify_pacman_transaction_dependencies() {
 	local package_file metadata_name planned_name planned_repository planned_version
 	local transaction_output

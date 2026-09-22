@@ -3,6 +3,11 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+command -v rg >/dev/null 2>&1 || {
+	printf 'not ok - rg (ripgrep) is required to run this test\n' >&2
+	exit 1
+}
+
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "$TEST_ROOT"' EXIT

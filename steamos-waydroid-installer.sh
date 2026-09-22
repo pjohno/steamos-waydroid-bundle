@@ -313,10 +313,9 @@ else
 		exit 1
 	fi
 
-	if [ "$binder_package_kernel" != "$running_kernel_release" ]; then
-		echo "Bundled Binder module targets kernel $binder_package_kernel." >&2
-		echo "Running kernel is $running_kernel_release." >&2
-		echo "Refusing to install a Binder module built for a different kernel." >&2
+	if ! validate_binder_kernel_match \
+		"$binder_package_kernel" \
+		"$running_kernel_release"; then
 		exit 1
 	fi
 

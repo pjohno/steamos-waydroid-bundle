@@ -39,6 +39,12 @@ usr/lib/modules/6.18.50-test/kernel/drivers/android/
 usr/lib/modules/6.18.50-test/kernel/drivers/android/binder_linux.ko.zst
 LISTING
 	;;
+mismatched.pkg.tar.zst)
+	cat <<'LISTING'
+.PKGINFO
+usr/lib/modules/6.18.46-test/kernel/drivers/android/binder_linux.ko.zst
+LISTING
+	;;
 leading-dot.pkg.tar.zst)
 	cat <<'LISTING'
 ./usr/lib/modules/6.18.50-test/kernel/drivers/android/binder_linux.ko.xz
@@ -66,6 +72,7 @@ chmod +x "$MOCK_BIN/bsdtar"
 
 for package in \
 	valid.pkg.tar.zst \
+	mismatched.pkg.tar.zst \
 	leading-dot.pkg.tar.zst \
 	missing-binder.pkg.tar.zst \
 	multiple-kernels.pkg.tar.zst; do
@@ -81,6 +88,41 @@ kernel_release="$(
 [[ "$kernel_release" == 6.18.50-test ]] ||
 	fail "valid Binder package returned unexpected kernel release: $kernel_release"
 
+if ! validate_binder_kernel_match \
+	"$kernel_release" \
+	"6.18.50-test"; then
+	fail 'Binder package matching the running kernel was rejected'
+fi
+
+mismatched_kernel_release="$(
+	binder_package_kernel_release "$TEST_ROOT/mismatched.pkg.tar.zst"
+)" || fail 'mismatched Binder package could not be inspected'
+
+[[ "$mismatched_kernel_release" == 6.18.46-test ]] ||
+	fail "mismatched Binder package returned unexpected kernel release: $mismatched_kernel_release"
+
+if validate_binder_kernel_match \
+	"$mismatched_kernel_release" \
+	"6.18.50-test" \
+	>"$TEST_ROOT/mismatch-output" 2>&1; then
+	fail 'Binder package for a different running kernel was accepted'
+fi
+
+grep -Fq \
+	'Bundled Binder module targets kernel 6.18.46-test.' \
+	"$TEST_ROOT/mismatch-output" ||
+	fail 'kernel mismatch did not report the Binder package kernel'
+
+grep -Fq \
+	'Running kernel is 6.18.50-test.' \
+	"$TEST_ROOT/mismatch-output" ||
+	fail 'kernel mismatch did not report the running kernel'
+
+grep -Fq \
+	'Refusing to install a Binder module built for a different kernel.' \
+	"$TEST_ROOT/mismatch-output" ||
+	fail 'kernel mismatch did not report that installation was refused'
+	
 kernel_release="$(
 	binder_package_kernel_release "$TEST_ROOT/leading-dot.pkg.tar.zst"
 )" || fail 'Binder package with ./ archive paths was rejected'
