@@ -122,7 +122,7 @@ grep -Fq \
 	'Refusing to install a Binder module built for a different kernel.' \
 	"$TEST_ROOT/mismatch-output" ||
 	fail 'kernel mismatch did not report that installation was refused'
-	
+
 kernel_release="$(
 	binder_package_kernel_release "$TEST_ROOT/leading-dot.pkg.tar.zst"
 )" || fail 'Binder package with ./ archive paths was rejected'
