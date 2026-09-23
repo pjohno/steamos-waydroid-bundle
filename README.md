@@ -32,9 +32,7 @@ the SteamOS release and build plus relevant compiler, runtime, Python, Wayland,
 graphics, input, and system-library versions.
 
 An exact version, build, and ABI match is always preferred. If no exact bundle
-exists, a bundle with the same userspace ABI is supported when the running
-kernel provides built-in Binder; its target-specific Binder package is skipped.
-Without built-in Binder, version/build matching remains strict. Development and
+exists, a bundle may also be reused across SteamOS build/version changes when the userspace ABI matches and Binder compatibility is satisfied. For kernels with external Binder modules, the bundle's recorded kernel release must match the running kernel exactly. Development and
 `main`-branch SteamOS builds remain experimental, and existing SteamOS-family
 and branch checks still apply.
 
@@ -193,8 +191,8 @@ deployment, or follow the maintainer build procedure.
 | `./steamos-waydroid-installer.sh`                           | Fresh install when no image exists; otherwise automatic protected repair.                                                                           |
 | `./steamos-waydroid-installer.sh --repair`                  | Explicitly require the protected existing-image repair path.                                                                                        |
 | `./steamos-waydroid-installer.sh --reinstall-android`       | Deliberately create a new Android instance after typed confirmation. Existing image and user state are archived first.                              |
-| `./steamos-waydroid-installer.sh --install-test`             | Install a separate experimental Waydroid Test image and user state without modifying the normal Android environment.                                |
-| `./steamos-waydroid-installer.sh --remove-test`              | Delete only the separate experimental Waydroid Test Android environment; the normal environment and Steam shortcuts are not modified.               |
+| `./steamos-waydroid-installer.sh --install-test`            | Install a separate experimental Waydroid Test image and user state without modifying the normal Android environment.                                |
+| `./steamos-waydroid-installer.sh --remove-test`             | Delete only the separate experimental Waydroid Test Android environment; the normal environment and Steam shortcuts are not modified.               |
 | `./steamos-waydroid-installer.sh --configure-artifacts`     | Replace the Deck's bundle source through the advanced configuration wizard.                                                                         |
 | `./steamos-waydroid-installer.sh --uninstall`               | Remove host integration while retaining Android state, the checkout, installed bundles, and artifact configuration.                                 |
 | `./steamos-waydroid-installer.sh --purge-android`           | Delete Android state and reinstall archives while retaining the checkout and verified bundles.                                                      |
