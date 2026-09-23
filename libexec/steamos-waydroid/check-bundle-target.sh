@@ -89,7 +89,7 @@ if [[ "$compatibility" == exact ]]; then
 elif [[ "$compatibility" == abi-compatible ]]; then
 	printf 'ABI-compatible bundle match.\n'
 	printf 'Using ABI-compatible bundle built for a different SteamOS release.\n'
-	printf 'Userspace ABI matches and the running kernel provides Binder.\n'
+	printf 'Userspace ABI and Binder compatibility requirements are satisfied.\n'
 elif ((${#mismatches[@]} > 0)); then
 	printf 'Incompatible bundle:\n' >&2
 	printf '  %s\n' "${mismatches[@]}" >&2
