@@ -20,10 +20,11 @@ fail() {
 }
 
 write_fingerprint() {
-	local path="$1" version="$2" build="$3" abi="$4"
+	local path="$1" version="$2" build="$3" kernel="$4" abi="$5"
 	cat >"$path" <<EOF
 STEAMOS_VERSION_ID=$version
 STEAMOS_BUILD_ID=$build
+KERNEL_RELEASE=$kernel
 ABI_SHA256=$abi
 EOF
 }
@@ -44,16 +45,25 @@ export STEAMOS_WAYDROID_MODINFO="$MOCK_BIN/modinfo"
 export STEAMOS_WAYDROID_KERNEL_RELEASE=test-kernel
 export STEAMOS_WAYDROID_MODULES_ROOT="$MODULES_ROOT"
 
-write_fingerprint "$EXPECTED" 3.8.0 build-a "$ABI_A"
-write_fingerprint "$CURRENT" 3.8.0 build-a "$ABI_A"
+write_fingerprint "$EXPECTED" 3.8.0 build-a test-kernel "$ABI_A"
+write_fingerprint "$CURRENT" 3.8.0 build-a test-kernel "$ABI_A"
 MOCK_BINDER_BUILTIN=false bundle_compatibility "$EXPECTED" "$CURRENT" |
 	grep -Fxq exact || fail 'same version/build and ABI was not exact'
-write_fingerprint "$CURRENT" 3.8.1 build-b "$ABI_A"
+
+write_fingerprint "$CURRENT" 3.8.1 build-b other-kernel "$ABI_A"
 MOCK_BINDER_BUILTIN=true bundle_compatibility "$EXPECTED" "$CURRENT" |
 	grep -Fxq abi-compatible || fail 'matching ABI with built-in Binder was not ABI-compatible'
+
+write_fingerprint "$CURRENT" 3.8.1 build-b test-kernel "$ABI_A"
+MOCK_BINDER_BUILTIN=false bundle_compatibility "$EXPECTED" "$CURRENT" |
+	grep -Fxq abi-compatible ||
+	fail 'matching ABI and kernel without built-in Binder was not ABI-compatible'
+
+write_fingerprint "$CURRENT" 3.8.1 build-b other-kernel "$ABI_A"
 MOCK_BINDER_BUILTIN=false bundle_compatibility "$EXPECTED" "$CURRENT" |
 	grep -Fxq incompatible || fail 'matching ABI without built-in Binder was accepted'
-write_fingerprint "$CURRENT" 3.8.1 build-b "$ABI_B"
+
+write_fingerprint "$CURRENT" 3.8.1 build-b other-kernel "$ABI_B"
 MOCK_BINDER_BUILTIN=true bundle_compatibility "$EXPECTED" "$CURRENT" |
 	grep -Fxq incompatible || fail 'different ABI with built-in Binder was accepted'
 
