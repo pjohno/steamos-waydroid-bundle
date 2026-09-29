@@ -433,8 +433,8 @@ EOF
 else
 	printf 'Removing Steam shortcuts and their local artwork...\n'
 	shortcut_cleanup_failed=false
-	python3 "$SHORTCUT_MANAGER" remove waydroid || shortcut_cleanup_failed=true
-	python3 "$SHORTCUT_MANAGER" remove nested-desktop || shortcut_cleanup_failed=true
+	/usr/bin/python3 "$SHORTCUT_MANAGER" remove waydroid || shortcut_cleanup_failed=true
+	/usr/bin/python3 "$SHORTCUT_MANAGER" remove nested-desktop || shortcut_cleanup_failed=true
 	if [[ "$shortcut_cleanup_failed" == true ]]; then
 		MANUAL_SHORTCUT_REMOVAL=true
 		cat >&2 <<'EOF'

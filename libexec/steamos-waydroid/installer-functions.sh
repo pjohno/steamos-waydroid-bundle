@@ -707,7 +707,7 @@ apply_android_custom_config() {
 install_android_extras() {
 	# casualsnek / aleasto waydroid_script - install libndk / libhoudini and widevine
 	echo "*** create waydroid_script virtual environment ***" >>"$LOGFILE"
-	if ! python3 -m venv "$WAYDROID_SCRIPT_DIR"/venv >>"$LOGFILE" 2>&1; then
+	if ! /usr/bin/python3 -m venv "$WAYDROID_SCRIPT_DIR"/venv >>"$LOGFILE" 2>&1; then
 		echo "Error: could not create the waydroid_script Python environment." >&2
 		echo "Details were saved to: $LOGFILE" >&2
 		rm -rf -- "$WAYDROID_SCRIPT_DIR"

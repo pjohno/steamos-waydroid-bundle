@@ -249,7 +249,7 @@ if [ "${#python_package[@]}" -ne 1 ] || [ ! -f "${python_package[0]}" ]; then
 fi
 packaged_python_version=$(bsdtar -tf "${python_package[0]}" |
 	awk -F/ '$2 == "lib" && $3 ~ /^python[0-9]+\.[0-9]+$/ {sub(/^python/, "", $3); print $3; exit}')
-host_python_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+host_python_version=$(/usr/bin/python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 if [ -z "$packaged_python_version" ] || [ "$packaged_python_version" != "$host_python_version" ]; then
 	echo "Bundled python-gbinder targets Python ${packaged_python_version:-unknown}, but SteamOS provides Python $host_python_version." >&2
 	echo Build and publish a compatible bundle before continuing. >&2
@@ -375,7 +375,7 @@ prompt_return_to_gaming_mode() {
 shortcut_should_be_created() {
 	shortcut_target=$1
 	shortcut_label=$2
-	SHORTCUT_MATCH_COUNT=$(python3 "$WORKING_DIR/extras/icon.py" count "$shortcut_target")
+	SHORTCUT_MATCH_COUNT=$(/usr/bin/python3 "$WORKING_DIR/extras/icon.py" count "$shortcut_target")
 	shortcut_status=$?
 	if [ "$shortcut_status" -ne 0 ] || ! [[ "$SHORTCUT_MATCH_COUNT" =~ ^[0-9]+$ ]]; then
 		echo "Warning: Steam shortcuts could not be inspected; $shortcut_label will not be changed." >&2
@@ -394,7 +394,7 @@ wait_for_new_shortcut() {
 	previous_count=$2
 	shortcut_wait_attempt=0
 	while [ "$shortcut_wait_attempt" -lt 45 ]; do
-		current_count=$(python3 "$WORKING_DIR/extras/icon.py" count "$shortcut_target" 2>/dev/null) ||
+		current_count=$(/usr/bin/python3 "$WORKING_DIR/extras/icon.py" count "$shortcut_target" 2>/dev/null) ||
 			current_count=""
 		if [[ "$current_count" =~ ^[0-9]+$ ]] && [ "$current_count" -gt "$previous_count" ]; then
 			return 0
@@ -450,7 +450,7 @@ EOF
 						--artwork-dir "$WORKING_DIR/extras/icons/waydroid"
 					)
 					shortcut_reconcile_args+=(--keep-duplicates)
-					python3 "$WORKING_DIR/extras/icon.py" "${shortcut_reconcile_args[@]}" ||
+					/usr/bin/python3 "$WORKING_DIR/extras/icon.py" "${shortcut_reconcile_args[@]}" ||
 						echo "Warning: Waydroid artwork could not be installed." >&2
 				else
 					echo "Warning: Steam did not create the Waydroid shortcut within 45 seconds." >&2
@@ -485,7 +485,7 @@ EOF
 						--artwork-dir "$WORKING_DIR/extras/icons/waydroid-test"
 					)
 					shortcut_reconcile_args+=(--keep-duplicates)
-					python3 "$WORKING_DIR/extras/icon.py" "${shortcut_reconcile_args[@]}" ||
+					/usr/bin/python3 "$WORKING_DIR/extras/icon.py" "${shortcut_reconcile_args[@]}" ||
 						echo "Warning: Waydroid Test artwork could not be installed." >&2
 				else
 					echo "Warning: Steam did not create the Waydroid Test shortcut within 45 seconds." >&2
@@ -505,7 +505,7 @@ EOF
 					--artwork-dir "$WORKING_DIR/extras/icons/nested-desktop"
 				)
 				shortcut_reconcile_args+=(--keep-duplicates)
-				python3 "$WORKING_DIR/extras/icon.py" "${shortcut_reconcile_args[@]}" ||
+				/usr/bin/python3 "$WORKING_DIR/extras/icon.py" "${shortcut_reconcile_args[@]}" ||
 					echo "Warning: Nested Desktop artwork could not be installed." >&2
 			else
 				echo "Warning: Steam did not create the Nested Desktop shortcut within 45 seconds." >&2
@@ -792,7 +792,7 @@ if [ "$REPAIR_MODE" = true ]; then
 			abort_run
 		fi
 	done
-	if ! python3 -c 'import gbinder' &>/dev/null; then
+	if ! /usr/bin/python3 -c 'import gbinder' &>/dev/null; then
 		echo Repair verification failed: python-gbinder cannot be imported. >&2
 		abort_run
 	fi

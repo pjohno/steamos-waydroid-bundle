@@ -281,13 +281,13 @@ while true; do
 
 	elif [ "$Choice" == "LAUNCHER" ]; then
 		SHORTCUT_MANAGER="$HOME/Android_Waydroid/steam-shortcuts.py"
-		if python3 "$SHORTCUT_MANAGER" has waydroid; then
+		if /usr/bin/python3 "$SHORTCUT_MANAGER" has waydroid; then
 			echo Existing Waydroid shortcut found. It will be updated.
 		else
 			steamos-add-to-steam "$HOME/Android_Waydroid/Android_Waydroid_Cage.sh"
 			sleep 5
 		fi
-		python3 "$SHORTCUT_MANAGER" reconcile waydroid \
+		/usr/bin/python3 "$SHORTCUT_MANAGER" reconcile waydroid \
 			--artwork-dir "$HOME/Android_Waydroid/icons/waydroid"
 		zenity --warning --title "Waydroid Toolbox" --text "One Android Waydroid launcher and its local artwork are ready in Game Mode!" --width 500 --height 75
 
