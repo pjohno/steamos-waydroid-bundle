@@ -115,6 +115,7 @@ printf '\nTarget kernel support:\n'
 printf '  Kernel release: %s\n' "$kernel_release"
 printf '  Binder support: %s\n' "$binder_state"
 
+binder_implementation=""
 binder_repository=""
 binder_commit=""
 binder_sha256=""
@@ -141,22 +142,37 @@ if [[ "$binder_state" == "missing" ]]; then
 	# shellcheck disable=SC1090
 	source "$BINDER_SOURCE_LOCK_PATH"
 
-	[[ "${format:-}" == "1" ]] ||
-		die "unsupported Binder source lock format: ${format:-missing}"
-
-	for required_var in binder_repository binder_commit binder_sha256 binder_pkgrel; do
-		[[ -n "${!required_var:-}" ]] ||
-			die "Binder source lock is missing $required_var"
-	done
+	case "${format:-}" in
+		1)
+			binder_implementation="choff"
+			for required_var in binder_repository binder_commit binder_sha256 binder_pkgrel; do
+				[[ -n "${!required_var:-}" ]] ||
+					die "Binder source lock is missing $required_var"
+			done
+			;;
+		2)
+			[[ "${binder_implementation:-}" == "valve" ]] ||
+				die "unsupported Binder implementation in format 2 lock: ${binder_implementation:-missing}"
+			for required_var in binder_repository binder_pkgrel; do
+				[[ -n "${!required_var:-}" ]] ||
+					die "Binder source lock is missing $required_var"
+			done
+			;;
+		*)
+			die "unsupported Binder source lock format: ${format:-missing}"
+			;;
+	esac
 
 	[[ "$binder_pkgrel" =~ ^[1-9][0-9]*$ ]] ||
 		die "invalid binder_pkgrel in Binder source lock: $binder_pkgrel"
 	[[ "$binder_repository" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$ ]] ||
 		die "Binder repository must be an HTTPS GitHub repository: $binder_repository"
-	[[ "$binder_commit" =~ ^[0-9a-fA-F]{40}$ ]] ||
-		die "invalid binder_commit in Binder source lock: $binder_commit"
-	[[ "$binder_sha256" =~ ^[0-9a-fA-F]{64}$ ]] ||
-		die "invalid binder_sha256 in Binder source lock"
+	if [[ "$binder_implementation" == "choff" ]]; then
+		[[ "$binder_commit" =~ ^[0-9a-fA-F]{40}$ ]] ||
+			die "invalid binder_commit in Binder source lock: $binder_commit"
+		[[ "$binder_sha256" =~ ^[0-9a-fA-F]{64}$ ]] ||
+			die "invalid binder_sha256 in Binder source lock"
+	fi
 
 	if [[ -n "${binder_patch:-}" ]]; then
 		[[ "$binder_patch" =~ ^[A-Za-z0-9._+-]+$ ]] ||
@@ -172,7 +188,10 @@ if [[ "$binder_state" == "missing" ]]; then
 	fi
 
 	printf 'Using Binder source lock:\n  %s\n' "$BINDER_SOURCE_LOCK_PATH"
-	printf '  Commit: %s\n' "$binder_commit"
+	printf '  Implementation: %s\n' "$binder_implementation"
+	if [[ "$binder_implementation" == "choff" ]]; then
+		printf '  Commit: %s\n' "$binder_commit"
+	fi
 	printf '  pkgrel: %s\n' "$binder_pkgrel"
 	printf '  Patch:  %s\n' "${binder_patch:-none}"
 fi
