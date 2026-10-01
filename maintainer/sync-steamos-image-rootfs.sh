@@ -181,8 +181,9 @@ attach_and_mount_image() {
 	LOOP_DEVICE="$(sudo losetup --find --show --partscan --read-only "$RAW_IMAGE")"
 	[[ -n "$LOOP_DEVICE" ]] || die "losetup did not return a loop device"
 
-	# Give udev/partition probing a moment if needed.
+	# Wait for partition probing and udev metadata before reading PARTLABELs.
 	sudo partprobe "$LOOP_DEVICE" 2>/dev/null || true
+	sudo udevadm settle
 
 	root_part="$(
 		lsblk -nrpo NAME,PARTLABEL "$LOOP_DEVICE" |
