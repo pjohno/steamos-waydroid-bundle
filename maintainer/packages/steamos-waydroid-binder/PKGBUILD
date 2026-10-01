@@ -7,17 +7,32 @@ url="${STEAMOS_BINDER_REPOSITORY:?STEAMOS_BINDER_REPOSITORY is required}"
 license=('GPL-2.0-only')
 options=('!strip' '!debug')
 
+: "${STEAMOS_BINDER_IMPLEMENTATION:?STEAMOS_BINDER_IMPLEMENTATION is required}"
 : "${STEAMOS_BINDER_COMMIT:?STEAMOS_BINDER_COMMIT is required}"
 : "${STEAMOS_KERNEL_RELEASE:?STEAMOS_KERNEL_RELEASE is required}"
 
 repository_archive_base="${STEAMOS_BINDER_REPOSITORY%.git}"
-source=(
-	"anbox-modules-${STEAMOS_BINDER_COMMIT}.tar.gz::${repository_archive_base}/archive/${STEAMOS_BINDER_COMMIT}.tar.gz"
-)
 
-sha256sums=(
-	"${STEAMOS_BINDER_SHA256:?STEAMOS_BINDER_SHA256 is required}"
-)
+case "$STEAMOS_BINDER_IMPLEMENTATION" in
+	choff)
+		source=(
+			"anbox-modules-${STEAMOS_BINDER_COMMIT}.tar.gz::${repository_archive_base}/archive/${STEAMOS_BINDER_COMMIT}.tar.gz"
+		)
+		sha256sums=(
+			"${STEAMOS_BINDER_SHA256:?STEAMOS_BINDER_SHA256 is required}"
+		)
+		;;
+	valve)
+		source=(
+			"linux-integration::git+${STEAMOS_BINDER_REPOSITORY}#commit=${STEAMOS_BINDER_COMMIT}"
+		)
+		sha256sums=('SKIP')
+		;;
+	*)
+		printf 'Unsupported Binder implementation: %s\n' "$STEAMOS_BINDER_IMPLEMENTATION" >&2
+		exit 1
+		;;
+esac
 
 if [[ -n ${STEAMOS_BINDER_PATCH:-} ]]; then
 	source+=("$STEAMOS_BINDER_PATCH")
