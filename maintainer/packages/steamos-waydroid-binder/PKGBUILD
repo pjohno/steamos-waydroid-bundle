@@ -42,16 +42,38 @@ if [[ -n ${STEAMOS_BINDER_PATCH:-} ]]; then
 fi
 
 prepare() {
-	local source_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}"
+	case "$STEAMOS_BINDER_IMPLEMENTATION" in
+		choff)
+			local source_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}"
 
-	if [[ -n ${STEAMOS_BINDER_PATCH:-} ]]; then
-		patch -d "$source_dir" -Np1 -i "$srcdir/$STEAMOS_BINDER_PATCH"
-	fi
+			if [[ -n ${STEAMOS_BINDER_PATCH:-} ]]; then
+				patch -d "$source_dir" -Np1 -i "$srcdir/$STEAMOS_BINDER_PATCH"
+			fi
+			;;
+		valve)
+			local binder_dir="$srcdir/valve-binder"
+
+			rm -rf "$binder_dir"
+			mkdir -p "$binder_dir"
+			cp -a "$srcdir/linux-integration/drivers/android/." "$binder_dir/"
+			cp "$startdir/valve/Makefile" "$binder_dir/Makefile"
+			patch -d "$binder_dir" -Np1 -i "$startdir/valve/module.patch"
+			;;
+	esac
 }
 
 build() {
 	local kernel_build="/usr/lib/modules/${STEAMOS_KERNEL_RELEASE}/build"
-	local binder_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}/binder"
+	local binder_dir
+
+	case "$STEAMOS_BINDER_IMPLEMENTATION" in
+		choff)
+			binder_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}/binder"
+			;;
+		valve)
+			binder_dir="$srcdir/valve-binder"
+			;;
+	esac
 
 	[[ -r "$kernel_build/Makefile" ]] || {
 		printf 'Missing target kernel build tree: %s\n' "$kernel_build" >&2
@@ -64,8 +86,17 @@ build() {
 }
 
 package() {
-	local binder_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}/binder"
+	local binder_dir
 	local module_dir="$pkgdir/usr/lib/modules/${STEAMOS_KERNEL_RELEASE}/updates/steamos-waydroid"
+
+	case "$STEAMOS_BINDER_IMPLEMENTATION" in
+		choff)
+			binder_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}/binder"
+			;;
+		valve)
+			binder_dir="$srcdir/valve-binder"
+			;;
+	esac
 
 	install -Dm644 \
 		"$binder_dir/binder_linux.ko" \
