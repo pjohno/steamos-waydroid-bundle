@@ -57,7 +57,9 @@ prepare() {
 			mkdir -p "$binder_dir"
 			cp -a "$srcdir/linux-integration/drivers/android/." "$binder_dir/"
 			cp "$startdir/valve/Makefile" "$binder_dir/Makefile"
-			patch -d "$binder_dir" -Np1 -i "$startdir/valve/module.patch"
+			cp "$startdir/valve/deps.c" "$binder_dir/deps.c"
+			cp "$startdir/valve/deps.h" "$binder_dir/deps.h"
+			"$startdir/valve/prepare-source.sh" "$binder_dir"
 			;;
 	esac
 }
