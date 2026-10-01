@@ -171,9 +171,11 @@ if [[ "$binder_state" == "missing" ]]; then
 		die "Binder repository must be an HTTPS GitHub repository: $binder_repository"
 
 	if [[ "$binder_implementation" == "valve" ]]; then
-		read -r binder_valve_tag binder_valve_short_commit < <(
+		binder_valve_source_id="$(
 			target_valve_kernel_source_id "$kernel_release"
-		)
+		)"
+		binder_valve_tag="${binder_valve_source_id%% *}"
+		binder_valve_short_commit="${binder_valve_source_id##* }"
 
 		binder_commit="$(
 			git ls-remote "$binder_repository" "refs/tags/${binder_valve_tag}^{}" |
