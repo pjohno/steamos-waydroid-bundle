@@ -117,6 +117,8 @@ printf '  Binder support: %s\n' "$binder_state"
 
 binder_implementation=""
 binder_repository=""
+binder_valve_tag=""
+binder_valve_short_commit=""
 binder_commit=""
 binder_sha256=""
 binder_pkgrel=""
@@ -167,6 +169,31 @@ if [[ "$binder_state" == "missing" ]]; then
 		die "invalid binder_pkgrel in Binder source lock: $binder_pkgrel"
 	[[ "$binder_repository" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$ ]] ||
 		die "Binder repository must be an HTTPS GitHub repository: $binder_repository"
+
+	if [[ "$binder_implementation" == "valve" ]]; then
+		read -r binder_valve_tag binder_valve_short_commit < <(
+			target_valve_kernel_source_id "$kernel_release"
+		)
+
+		binder_commit="$(
+			git ls-remote "$binder_repository" "refs/tags/${binder_valve_tag}^{}" |
+				awk 'NR == 1 { print $1 }'
+		)"
+
+		if [[ -z "$binder_commit" ]]; then
+			binder_commit="$(
+				git ls-remote "$binder_repository" "refs/tags/${binder_valve_tag}" |
+					awk 'NR == 1 { print $1 }'
+			)"
+		fi
+
+		[[ "$binder_commit" =~ ^[0-9a-fA-F]{40}$ ]] ||
+			die "could not resolve Valve kernel tag $binder_valve_tag"
+
+		[[ "$binder_commit" == "$binder_valve_short_commit"* ]] ||
+			die "Valve tag $binder_valve_tag resolves to $binder_commit, expected commit prefix $binder_valve_short_commit"
+	fi
+
 	if [[ "$binder_implementation" == "choff" ]]; then
 		[[ "$binder_commit" =~ ^[0-9a-fA-F]{40}$ ]] ||
 			die "invalid binder_commit in Binder source lock: $binder_commit"
@@ -191,6 +218,9 @@ if [[ "$binder_state" == "missing" ]]; then
 	printf '  Implementation: %s\n' "$binder_implementation"
 	if [[ "$binder_implementation" == "choff" ]]; then
 		printf '  Commit: %s\n' "$binder_commit"
+	else
+		printf '  Valve tag: %s\n' "$binder_valve_tag"
+		printf '  Commit:    %s\n' "$binder_commit"
 	fi
 	printf '  pkgrel: %s\n' "$binder_pkgrel"
 	printf '  Patch:  %s\n' "${binder_patch:-none}"
