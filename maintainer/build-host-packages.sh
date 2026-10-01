@@ -272,7 +272,9 @@ build_package() {
 			WAYDROID_PKGREL="$waydroid_pkgrel" \
 			WAYDROID_SHA256="$waydroid_sha256" \
 			STEAMOS_KERNEL_RELEASE="$kernel_release" \
+			STEAMOS_BINDER_IMPLEMENTATION="${binder_implementation:-}" \
 			STEAMOS_BINDER_REPOSITORY="${binder_repository:-}" \
+			STEAMOS_BINDER_VALVE_TAG="${binder_valve_tag:-}" \
 			STEAMOS_BINDER_COMMIT="${binder_commit:-}" \
 			STEAMOS_BINDER_SHA256="${binder_sha256:-}" \
 			STEAMOS_BINDER_PKGREL="${binder_pkgrel:-}" \
