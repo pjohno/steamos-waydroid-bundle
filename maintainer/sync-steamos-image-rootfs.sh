@@ -214,6 +214,26 @@ attach_and_mount_image() {
 		die "mounted image does not contain /etc/os-release"
 }
 
+attach_pre_mounted_rootfs() {
+	local source_mount="$1"
+
+	mountpoint -q "$source_mount" ||
+		die "source rootfs is not mounted: $source_mount"
+
+	[[ -f "$source_mount/usr/bin/bash" ]] ||
+		die "source rootfs is missing /usr/bin/bash"
+
+	[[ -f "$source_mount/etc/os-release" ]] ||
+		die "source rootfs is missing /etc/os-release"
+
+	IMAGE_MOUNT="$(mktemp -d "$BUILD_WORK_ROOT/.steamos-image-mount.XXXXXX")"
+
+	sudo mount --bind "$source_mount" "$IMAGE_MOUNT"
+	sudo mount --make-rprivate "$IMAGE_MOUNT"
+
+	printf 'Using existing SteamOS rootfs: %s\n' "$source_mount"
+}
+
 mount_chroot_api_filesystems() {
 	local fs target
 
@@ -403,18 +423,27 @@ create_snapshot_and_rootfs() {
 main() {
 	mkdir -p "$BUILD_WORK_ROOT" "$TARGETS_ROOT" "$IMAGE_CACHE_ROOT"
 
-	fetch_channel_metadata
-	select_channel
-	resolve_image_url
-	download_and_decompress_image
-	attach_and_mount_image
+	if [[ -n "${STEAMOS_ROOTFS_MOUNT:-}" ]]; then
+		attach_pre_mounted_rootfs "$STEAMOS_ROOTFS_MOUNT"
+	else
+		fetch_channel_metadata
+		select_channel
+		resolve_image_url
+		download_and_decompress_image
+		attach_and_mount_image
+	fi
+
 	mount_chroot_api_filesystems
 	capture_target_fingerprint
 	detect_pacman_db_path
 	create_snapshot_and_rootfs
 
-	printf '\nSteamOS image cached at:\n  %s\n' "$COMPRESSED_IMAGE"
-	printf 'Decompressed image cached at:\n  %s\n' "$RAW_IMAGE"
+	if [[ -n "${STEAMOS_ROOTFS_MOUNT:-}" ]]; then
+		printf '\nSteamOS source rootfs:\n  %s\n' "$STEAMOS_ROOTFS_MOUNT"
+	else
+		printf '\nSteamOS image cached at:\n  %s\n' "$COMPRESSED_IMAGE"
+		printf 'Decompressed image cached at:\n  %s\n' "$RAW_IMAGE"
+	fi
 	printf 'SteamOS build root created at:\n  %s\n' "$ROOTFS_ROOT"
 	printf 'Target fingerprint created at:\n  %s\n' "$TARGET_FINGERPRINT_FILE"
 	printf 'Versioned target environment:\n  %s\n' "$TARGET_WORK_ROOT"

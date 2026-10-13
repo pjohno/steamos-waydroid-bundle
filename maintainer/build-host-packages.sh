@@ -145,24 +145,24 @@ if [[ "$binder_state" == "missing" ]]; then
 	source "$BINDER_SOURCE_LOCK_PATH"
 
 	case "${format:-}" in
-		1)
-			binder_implementation="choff"
-			for required_var in binder_repository binder_commit binder_sha256 binder_pkgrel; do
-				[[ -n "${!required_var:-}" ]] ||
-					die "Binder source lock is missing $required_var"
-			done
-			;;
-		2)
-			[[ "${binder_implementation:-}" == "valve" ]] ||
-				die "unsupported Binder implementation in format 2 lock: ${binder_implementation:-missing}"
-			for required_var in binder_repository binder_pkgrel; do
-				[[ -n "${!required_var:-}" ]] ||
-					die "Binder source lock is missing $required_var"
-			done
-			;;
-		*)
-			die "unsupported Binder source lock format: ${format:-missing}"
-			;;
+	1)
+		binder_implementation="choff"
+		for required_var in binder_repository binder_commit binder_sha256 binder_pkgrel; do
+			[[ -n "${!required_var:-}" ]] ||
+				die "Binder source lock is missing $required_var"
+		done
+		;;
+	2)
+		[[ "${binder_implementation:-}" == "valve" ]] ||
+			die "unsupported Binder implementation in format 2 lock: ${binder_implementation:-missing}"
+		for required_var in binder_repository binder_pkgrel; do
+			[[ -n "${!required_var:-}" ]] ||
+				die "Binder source lock is missing $required_var"
+		done
+		;;
+	*)
+		die "unsupported Binder source lock format: ${format:-missing}"
+		;;
 	esac
 
 	[[ "$binder_pkgrel" =~ ^[1-9][0-9]*$ ]] ||
@@ -231,6 +231,30 @@ fi
 rm -rf -- "$PACKAGE_WORK_ROOT" "$PACKAGE_OUTPUT_ROOT"
 install -d -o "$HOST_UID" -g "$HOST_GID" \
 	"$SOURCE_CACHE" "$PACKAGE_WORK_ROOT" "$PACKAGE_OUTPUT_ROOT"
+
+if [[ "$binder_implementation" == "valve" ]]; then
+	require_command curl
+	require_command sha256sum
+
+	archive_name="linux-integration-${binder_commit}.tar.gz"
+	archive_path="$SOURCE_CACHE/$archive_name"
+	archive_url="${binder_repository%.git}/archive/${binder_commit}.tar.gz"
+
+	if [[ ! -s "$archive_path" ]]; then
+		printf 'Downloading Valve kernel source archive...\n'
+
+		setpriv --reuid="$HOST_UID" --regid="$HOST_GID" --clear-groups \
+			curl -fL --retry 3 \
+			-o "$archive_path.part" \
+			"$archive_url" ||
+			die "failed to download Valve kernel source"
+
+		mv -- "$archive_path.part" "$archive_path"
+	fi
+
+	binder_sha256="$(sha256sum "$archive_path" | awk '{print $1}')"
+	printf 'Valve source SHA-256: %s\n' "$binder_sha256"
+fi
 
 build_package() {
 	local package_name="$1"
