@@ -140,6 +140,11 @@ resolve_image_url() {
 	COMPRESSED_IMAGE="$IMAGE_DIR/$IMAGE_FILENAME"
 	RAW_IMAGE="${COMPRESSED_IMAGE%.zst}"
 
+	# RAUC update bundle supplied by Valve's AtomUpd metadata.
+	RAUC_URL="$IMAGE_BASE/${update_path#/}"
+	RAUC_FILENAME="${RAUC_URL##*/}"
+	RAUC_FILE="$IMAGE_DIR/$RAUC_FILENAME"
+
 	printf '\nSelected %s %s (build %s)\n' \
 		"$SELECTED_CHANNEL" "$SELECTED_VERSION" "$SELECTED_BUILDID"
 	printf 'Image URL:\n  %s\n' "$IMAGE_URL"
@@ -147,8 +152,16 @@ resolve_image_url() {
 	# atomupd points at the .raucb. Full .img.zst images normally use the same
 	# build directory and versioned basename, but not every development build
 	# is guaranteed to publish one. Fail clearly before doing any large work.
-	curl -fsSIL --retry 3 "$IMAGE_URL" >/dev/null ||
-		die "Valve does not appear to publish a full .img.zst for this build: $IMAGE_URL"
+	if curl -fsSIL --retry 3 "$IMAGE_URL" >/dev/null 2>&1; then
+		IMAGE_FORMAT="img-zst"
+		printf 'Full SteamOS image available.\n'
+	elif curl -fsSIL --retry 3 "$RAUC_URL" >/dev/null 2>&1; then
+		IMAGE_FORMAT="rauc"
+		printf 'Full image unavailable; using Valve RAUC update bundle.\n'
+		printf 'RAUC URL:\n  %s\n' "$RAUC_URL"
+	else
+		die "Neither a full SteamOS image nor a RAUC bundle is available for this build"
+	fi
 }
 
 download_and_decompress_image() {
@@ -172,6 +185,118 @@ download_and_decompress_image() {
 		printf 'Decompressing image...\n'
 		zstd -d -f --keep "$COMPRESSED_IMAGE" -o "$RAW_IMAGE"
 	fi
+}
+
+download_rauc_bundle() {
+	mkdir -p "$IMAGE_DIR"
+
+	if [[ -s "$RAUC_FILE" ]]; then
+		printf 'Using cached RAUC bundle:\n  %s\n' "$RAUC_FILE"
+	else
+		printf 'Downloading SteamOS RAUC bundle...\n'
+
+		curl -fL --retry 3 \
+			--output "${RAUC_FILE}.part" \
+			"$RAUC_URL" ||
+			die "failed to download Valve RAUC bundle"
+
+		mv -- "${RAUC_FILE}.part" "$RAUC_FILE"
+	fi
+
+	printf 'RAUC bundle SHA-256:\n'
+	sha256sum "$RAUC_FILE"
+}
+
+extract_rauc_index() {
+	require_command unsquashfs
+
+	RAUC_CONTENT_DIR="$IMAGE_DIR/rauc-content"
+	RAUC_MANIFEST="$RAUC_CONTENT_DIR/manifest.raucm"
+	RAUC_INDEX="$RAUC_CONTENT_DIR/rootfs.img.caibx"
+
+	mkdir -p "$RAUC_CONTENT_DIR"
+
+	printf 'Extracting RAUC manifest and casync index...\n'
+
+	unsquashfs -f -d "$RAUC_CONTENT_DIR" \
+		"$RAUC_FILE" \
+		manifest.raucm \
+		rootfs.img.caibx ||
+		die "failed to extract RAUC metadata"
+
+	[[ -s "$RAUC_MANIFEST" ]] ||
+		die "RAUC manifest is missing"
+
+	[[ -s "$RAUC_INDEX" ]] ||
+		die "RAUC rootfs index is missing"
+
+	printf 'RAUC metadata extracted successfully.\n'
+}
+
+reconstruct_rauc_rootfs() {
+	local store_url expected_sha expected_size actual_size
+	local temporary_image
+
+	require_command casync
+
+	RAW_IMAGE="$IMAGE_DIR/rootfs.img"
+	temporary_image="${RAW_IMAGE}.part"
+	store_url="${RAUC_URL%.raucb}.castr"
+
+	expected_sha="$(
+		awk -F= '
+			$0 == "[image.rootfs]" { section = 1; next }
+			/^\[/ { section = 0 }
+			section && $1 == "sha256" { print $2; exit }
+		' "$RAUC_MANIFEST"
+	)"
+
+	expected_size="$(
+		awk -F= '
+			$0 == "[image.rootfs]" { section = 1; next }
+			/^\[/ { section = 0 }
+			section && $1 == "size" { print $2; exit }
+		' "$RAUC_MANIFEST"
+	)"
+
+	[[ "$expected_sha" =~ ^[0-9a-fA-F]{64}$ ]] ||
+		die "invalid rootfs SHA-256 in RAUC manifest"
+
+	[[ "$expected_size" =~ ^[0-9]+$ ]] ||
+		die "invalid rootfs size in RAUC manifest"
+
+	if [[ -s "$RAW_IMAGE" ]]; then
+		actual_size="$(stat -c '%s' "$RAW_IMAGE")"
+
+		if [[ "$actual_size" == "$expected_size" ]] &&
+			printf '%s  %s\n' "$expected_sha" "$RAW_IMAGE" |
+			sha256sum -c --status; then
+			printf 'Using verified cached RAUC rootfs:\n  %s\n' "$RAW_IMAGE"
+			return
+		fi
+	fi
+
+	printf 'Reconstructing SteamOS rootfs using casync...\n'
+	rm -f -- "$temporary_image"
+
+	casync extract \
+		--store="$store_url" \
+		"$RAUC_INDEX" \
+		"$temporary_image" ||
+		die "casync rootfs reconstruction failed"
+
+	actual_size="$(stat -c '%s' "$temporary_image")"
+
+	[[ "$actual_size" == "$expected_size" ]] ||
+		die "reconstructed rootfs size does not match RAUC manifest"
+
+	printf '%s  %s\n' "$expected_sha" "$temporary_image" |
+		sha256sum -c --status ||
+		die "reconstructed rootfs SHA-256 does not match RAUC manifest"
+
+	mv -- "$temporary_image" "$RAW_IMAGE"
+
+	printf 'SteamOS rootfs reconstructed and verified:\n  %s\n' "$RAW_IMAGE"
 }
 
 attach_and_mount_image() {
@@ -212,6 +337,29 @@ attach_and_mount_image() {
 		die "mounted image does not contain /usr/bin/bash"
 	[[ -r "$IMAGE_MOUNT/etc/os-release" ]] ||
 		die "mounted image does not contain /etc/os-release"
+}
+
+attach_and_mount_rauc_rootfs() {
+	printf 'Mounting reconstructed SteamOS Btrfs rootfs read-only...\n'
+
+	LOOP_DEVICE="$(sudo losetup --find --show --read-only "$RAW_IMAGE")"
+	[[ -n "$LOOP_DEVICE" ]] ||
+		die "could not attach reconstructed SteamOS rootfs"
+
+	IMAGE_MOUNT="$(mktemp -d "$BUILD_WORK_ROOT/.steamos-image-mount.XXXXXX")"
+
+	sudo mount -t btrfs \
+		-o ro,rescue=nologreplay \
+		"$LOOP_DEVICE" "$IMAGE_MOUNT" ||
+		die "could not mount reconstructed SteamOS Btrfs rootfs"
+
+	[[ -x "$IMAGE_MOUNT/usr/bin/bash" ]] ||
+		die "mounted rootfs does not contain /usr/bin/bash"
+
+	[[ -r "$IMAGE_MOUNT/etc/os-release" ]] ||
+		die "mounted rootfs does not contain /etc/os-release"
+
+	printf 'SteamOS Btrfs rootfs mounted successfully.\n'
 }
 
 attach_pre_mounted_rootfs() {
@@ -429,8 +577,22 @@ main() {
 		fetch_channel_metadata
 		select_channel
 		resolve_image_url
-		download_and_decompress_image
-		attach_and_mount_image
+
+		case "$IMAGE_FORMAT" in
+		img-zst)
+			download_and_decompress_image
+			attach_and_mount_image
+			;;
+		rauc)
+			download_rauc_bundle
+			extract_rauc_index
+			reconstruct_rauc_rootfs
+			attach_and_mount_rauc_rootfs
+			;;
+		*)
+			die "unsupported SteamOS image format: $IMAGE_FORMAT"
+			;;
+		esac
 	fi
 
 	mount_chroot_api_filesystems
@@ -440,6 +602,9 @@ main() {
 
 	if [[ -n "${STEAMOS_ROOTFS_MOUNT:-}" ]]; then
 		printf '\nSteamOS source rootfs:\n  %s\n' "$STEAMOS_ROOTFS_MOUNT"
+	elif [[ "$IMAGE_FORMAT" == "rauc" ]]; then
+		printf '\nSteamOS RAUC bundle cached at:\n  %s\n' "$RAUC_FILE"
+		printf 'Reconstructed rootfs cached at:\n  %s\n' "$RAW_IMAGE"
 	else
 		printf '\nSteamOS image cached at:\n  %s\n' "$COMPRESSED_IMAGE"
 		printf 'Decompressed image cached at:\n  %s\n' "$RAW_IMAGE"
