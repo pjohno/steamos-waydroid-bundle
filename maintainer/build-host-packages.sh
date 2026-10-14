@@ -115,7 +115,10 @@ printf '\nTarget kernel support:\n'
 printf '  Kernel release: %s\n' "$kernel_release"
 printf '  Binder support: %s\n' "$binder_state"
 
+binder_implementation=""
 binder_repository=""
+binder_valve_tag=""
+binder_valve_short_commit=""
 binder_commit=""
 binder_sha256=""
 binder_pkgrel=""
@@ -141,22 +144,64 @@ if [[ "$binder_state" == "missing" ]]; then
 	# shellcheck disable=SC1090
 	source "$BINDER_SOURCE_LOCK_PATH"
 
-	[[ "${format:-}" == "1" ]] ||
+	case "${format:-}" in
+	1)
+		binder_implementation="choff"
+		for required_var in binder_repository binder_commit binder_sha256 binder_pkgrel; do
+			[[ -n "${!required_var:-}" ]] ||
+				die "Binder source lock is missing $required_var"
+		done
+		;;
+	2)
+		[[ "${binder_implementation:-}" == "valve" ]] ||
+			die "unsupported Binder implementation in format 2 lock: ${binder_implementation:-missing}"
+		for required_var in binder_repository binder_pkgrel; do
+			[[ -n "${!required_var:-}" ]] ||
+				die "Binder source lock is missing $required_var"
+		done
+		;;
+	*)
 		die "unsupported Binder source lock format: ${format:-missing}"
-
-	for required_var in binder_repository binder_commit binder_sha256 binder_pkgrel; do
-		[[ -n "${!required_var:-}" ]] ||
-			die "Binder source lock is missing $required_var"
-	done
+		;;
+	esac
 
 	[[ "$binder_pkgrel" =~ ^[1-9][0-9]*$ ]] ||
 		die "invalid binder_pkgrel in Binder source lock: $binder_pkgrel"
 	[[ "$binder_repository" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$ ]] ||
 		die "Binder repository must be an HTTPS GitHub repository: $binder_repository"
-	[[ "$binder_commit" =~ ^[0-9a-fA-F]{40}$ ]] ||
-		die "invalid binder_commit in Binder source lock: $binder_commit"
-	[[ "$binder_sha256" =~ ^[0-9a-fA-F]{64}$ ]] ||
-		die "invalid binder_sha256 in Binder source lock"
+
+	if [[ "$binder_implementation" == "valve" ]]; then
+		binder_valve_source_id="$(
+			target_valve_kernel_source_id "$kernel_release"
+		)"
+		binder_valve_tag="${binder_valve_source_id%% *}"
+		binder_valve_short_commit="${binder_valve_source_id##* }"
+
+		binder_commit="$(
+			git ls-remote "$binder_repository" "refs/tags/${binder_valve_tag}^{}" |
+				awk 'NR == 1 { print $1 }'
+		)"
+
+		if [[ -z "$binder_commit" ]]; then
+			binder_commit="$(
+				git ls-remote "$binder_repository" "refs/tags/${binder_valve_tag}" |
+					awk 'NR == 1 { print $1 }'
+			)"
+		fi
+
+		[[ "$binder_commit" =~ ^[0-9a-fA-F]{40}$ ]] ||
+			die "could not resolve Valve kernel tag $binder_valve_tag"
+
+		[[ "$binder_commit" == "$binder_valve_short_commit"* ]] ||
+			die "Valve tag $binder_valve_tag resolves to $binder_commit, expected commit prefix $binder_valve_short_commit"
+	fi
+
+	if [[ "$binder_implementation" == "choff" ]]; then
+		[[ "$binder_commit" =~ ^[0-9a-fA-F]{40}$ ]] ||
+			die "invalid binder_commit in Binder source lock: $binder_commit"
+		[[ "$binder_sha256" =~ ^[0-9a-fA-F]{64}$ ]] ||
+			die "invalid binder_sha256 in Binder source lock"
+	fi
 
 	if [[ -n "${binder_patch:-}" ]]; then
 		[[ "$binder_patch" =~ ^[A-Za-z0-9._+-]+$ ]] ||
@@ -172,7 +217,13 @@ if [[ "$binder_state" == "missing" ]]; then
 	fi
 
 	printf 'Using Binder source lock:\n  %s\n' "$BINDER_SOURCE_LOCK_PATH"
-	printf '  Commit: %s\n' "$binder_commit"
+	printf '  Implementation: %s\n' "$binder_implementation"
+	if [[ "$binder_implementation" == "choff" ]]; then
+		printf '  Commit: %s\n' "$binder_commit"
+	else
+		printf '  Valve tag: %s\n' "$binder_valve_tag"
+		printf '  Commit:    %s\n' "$binder_commit"
+	fi
 	printf '  pkgrel: %s\n' "$binder_pkgrel"
 	printf '  Patch:  %s\n' "${binder_patch:-none}"
 fi
@@ -180,6 +231,30 @@ fi
 rm -rf -- "$PACKAGE_WORK_ROOT" "$PACKAGE_OUTPUT_ROOT"
 install -d -o "$HOST_UID" -g "$HOST_GID" \
 	"$SOURCE_CACHE" "$PACKAGE_WORK_ROOT" "$PACKAGE_OUTPUT_ROOT"
+
+if [[ "$binder_implementation" == "valve" ]]; then
+	require_command curl
+	require_command sha256sum
+
+	archive_name="linux-integration-${binder_commit}.tar.gz"
+	archive_path="$SOURCE_CACHE/$archive_name"
+	archive_url="${binder_repository%.git}/archive/${binder_commit}.tar.gz"
+
+	if [[ ! -s "$archive_path" ]]; then
+		printf 'Downloading Valve kernel source archive...\n'
+
+		setpriv --reuid="$HOST_UID" --regid="$HOST_GID" --clear-groups \
+			curl -fL --retry 3 \
+			-o "$archive_path.part" \
+			"$archive_url" ||
+			die "failed to download Valve kernel source"
+
+		mv -- "$archive_path.part" "$archive_path"
+	fi
+
+	binder_sha256="$(sha256sum "$archive_path" | awk '{print $1}')"
+	printf 'Valve source SHA-256: %s\n' "$binder_sha256"
+fi
 
 build_package() {
 	local package_name="$1"
@@ -223,7 +298,9 @@ build_package() {
 			WAYDROID_PKGREL="$waydroid_pkgrel" \
 			WAYDROID_SHA256="$waydroid_sha256" \
 			STEAMOS_KERNEL_RELEASE="$kernel_release" \
+			STEAMOS_BINDER_IMPLEMENTATION="${binder_implementation:-}" \
 			STEAMOS_BINDER_REPOSITORY="${binder_repository:-}" \
+			STEAMOS_BINDER_VALVE_TAG="${binder_valve_tag:-}" \
 			STEAMOS_BINDER_COMMIT="${binder_commit:-}" \
 			STEAMOS_BINDER_SHA256="${binder_sha256:-}" \
 			STEAMOS_BINDER_PKGREL="${binder_pkgrel:-}" \

@@ -7,17 +7,34 @@ url="${STEAMOS_BINDER_REPOSITORY:?STEAMOS_BINDER_REPOSITORY is required}"
 license=('GPL-2.0-only')
 options=('!strip' '!debug')
 
+: "${STEAMOS_BINDER_IMPLEMENTATION:?STEAMOS_BINDER_IMPLEMENTATION is required}"
 : "${STEAMOS_BINDER_COMMIT:?STEAMOS_BINDER_COMMIT is required}"
 : "${STEAMOS_KERNEL_RELEASE:?STEAMOS_KERNEL_RELEASE is required}"
 
 repository_archive_base="${STEAMOS_BINDER_REPOSITORY%.git}"
-source=(
-	"anbox-modules-${STEAMOS_BINDER_COMMIT}.tar.gz::${repository_archive_base}/archive/${STEAMOS_BINDER_COMMIT}.tar.gz"
-)
 
-sha256sums=(
-	"${STEAMOS_BINDER_SHA256:?STEAMOS_BINDER_SHA256 is required}"
-)
+case "$STEAMOS_BINDER_IMPLEMENTATION" in
+choff)
+	source=(
+		"anbox-modules-${STEAMOS_BINDER_COMMIT}.tar.gz::${repository_archive_base}/archive/${STEAMOS_BINDER_COMMIT}.tar.gz"
+	)
+	sha256sums=(
+		"${STEAMOS_BINDER_SHA256:?STEAMOS_BINDER_SHA256 is required}"
+	)
+	;;
+valve)
+	source=(
+		"linux-integration-${STEAMOS_BINDER_COMMIT}.tar.gz::${repository_archive_base}/archive/${STEAMOS_BINDER_COMMIT}.tar.gz"
+	)
+	sha256sums=(
+		"${STEAMOS_BINDER_SHA256:?STEAMOS_BINDER_SHA256 is required}"
+	)
+	;;
+*)
+	printf 'Unsupported Binder implementation: %s\n' "$STEAMOS_BINDER_IMPLEMENTATION" >&2
+	exit 1
+	;;
+esac
 
 if [[ -n ${STEAMOS_BINDER_PATCH:-} ]]; then
 	source+=("$STEAMOS_BINDER_PATCH")
@@ -27,16 +44,40 @@ if [[ -n ${STEAMOS_BINDER_PATCH:-} ]]; then
 fi
 
 prepare() {
-	local source_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}"
+	case "$STEAMOS_BINDER_IMPLEMENTATION" in
+	choff)
+		local source_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}"
 
-	if [[ -n ${STEAMOS_BINDER_PATCH:-} ]]; then
-		patch -d "$source_dir" -Np1 -i "$srcdir/$STEAMOS_BINDER_PATCH"
-	fi
+		if [[ -n ${STEAMOS_BINDER_PATCH:-} ]]; then
+			patch -d "$source_dir" -Np1 -i "$srcdir/$STEAMOS_BINDER_PATCH"
+		fi
+		;;
+	valve)
+		local binder_dir="$srcdir/valve-binder"
+
+		rm -rf "$binder_dir"
+		mkdir -p "$binder_dir"
+		cp -a "$srcdir/linux-integration-${STEAMOS_BINDER_COMMIT}/drivers/android/." "$binder_dir/"
+		cp "$startdir/valve/Makefile" "$binder_dir/Makefile"
+		cp "$startdir/valve/deps.c" "$binder_dir/deps.c"
+		cp "$startdir/valve/deps.h" "$binder_dir/deps.h"
+		"$startdir/valve/prepare-source.sh" "$binder_dir"
+		;;
+	esac
 }
 
 build() {
 	local kernel_build="/usr/lib/modules/${STEAMOS_KERNEL_RELEASE}/build"
-	local binder_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}/binder"
+	local binder_dir
+
+	case "$STEAMOS_BINDER_IMPLEMENTATION" in
+	choff)
+		binder_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}/binder"
+		;;
+	valve)
+		binder_dir="$srcdir/valve-binder"
+		;;
+	esac
 
 	[[ -r "$kernel_build/Makefile" ]] || {
 		printf 'Missing target kernel build tree: %s\n' "$kernel_build" >&2
@@ -49,8 +90,17 @@ build() {
 }
 
 package() {
-	local binder_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}/binder"
+	local binder_dir
 	local module_dir="$pkgdir/usr/lib/modules/${STEAMOS_KERNEL_RELEASE}/updates/steamos-waydroid"
+
+	case "$STEAMOS_BINDER_IMPLEMENTATION" in
+	choff)
+		binder_dir="$srcdir/anbox-modules-${STEAMOS_BINDER_COMMIT}/binder"
+		;;
+	valve)
+		binder_dir="$srcdir/valve-binder"
+		;;
+	esac
 
 	install -Dm644 \
 		"$binder_dir/binder_linux.ko" \

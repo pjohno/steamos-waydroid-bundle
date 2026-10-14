@@ -198,3 +198,18 @@ print_target_kernel_support() {
 	printf 'Target kernel package: %s\n' "$kernel_package"
 	printf 'Target Binder support: %s\n' "$binder_state"
 }
+
+target_valve_kernel_source_id() {
+	local kernel_release tag commit
+
+	kernel_release="${1:-$(target_kernel_release)}"
+
+	if [[ "$kernel_release" =~ ^(.+-valve[0-9]+)-[0-9]+-neptune-[^-]+-g([0-9a-fA-F]+)$ ]]; then
+		tag="${BASH_REMATCH[1]}"
+		commit="${BASH_REMATCH[2]}"
+	else
+		die "cannot derive Valve kernel source from release: $kernel_release"
+	fi
+
+	printf '%s %s\n' "$tag" "$commit"
+}

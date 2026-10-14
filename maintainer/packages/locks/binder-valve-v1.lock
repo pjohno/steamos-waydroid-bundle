@@ -1,0 +1,12 @@
+# Valve kernel-matched Binder source.
+#
+# The exact Valve kernel tag/commit is derived from the captured SteamOS
+# KERNEL_RELEASE rather than pinned here.
+
+format=2
+
+binder_implementation=valve
+binder_repository=https://github.com/evlaV/linux-integration.git
+
+# Packaging revision for our Binder package.
+binder_pkgrel=1
