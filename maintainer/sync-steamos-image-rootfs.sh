@@ -24,6 +24,14 @@ META_BASE="${STEAMOS_ATOMUPD_META_BASE:-https://steamdeck-atomupd.steamos.cloud/
 IMAGE_BASE="${STEAMOS_IMAGE_BASE:-https://steamdeck-images.steamos.cloud}"
 IMAGE_CACHE_ROOT="${STEAMOS_IMAGE_CACHE_ROOT:-$BUILD_WORK_ROOT/images}"
 
+# Trust anchor obtained independently from a Steam Deck. This fingerprint is
+# checked as well as RAUC's certificate-chain verification so replacing the
+# PEM with another CA does not silently broaden trust.
+VALVE_RAUC_KEYRING="$SCRIPT_DIR/keys/valve-steamos-rauc.pem"
+VALVE_RAUC_CERT_FINGERPRINT='D5:62:FE:FE:25:1B:76:EA:B0:E9:E9:99:35:4A:D1:86:B8:EB:2E:2F:B3:45:0F:AD:BE:C7:F6:AA:59:B6:02:D9'
+RAUC_BUNDLE_VERIFIED=false
+RAUC_BUNDLE_SHA=""
+
 declare -a CHANNEL_NAMES=(Stable Beta Preview Main)
 declare -a CHANNEL_FILES=(
 	steamdeck.json
@@ -203,20 +211,60 @@ download_rauc_bundle() {
 		mv -- "${RAUC_FILE}.part" "$RAUC_FILE"
 	fi
 
-	printf 'RAUC bundle SHA-256:\n'
-	sha256sum "$RAUC_FILE"
+	RAUC_BUNDLE_SHA="$(sha256sum "$RAUC_FILE" | awk '{print $1}')"
+	printf 'RAUC bundle SHA-256: %s\n' "$RAUC_BUNDLE_SHA"
+}
+
+verify_rauc_bundle() {
+	local fingerprint pem_cert_count
+
+	require_command rauc
+	require_command openssl
+
+	[[ -r "$VALVE_RAUC_KEYRING" ]] ||
+		die "trusted Valve RAUC certificate is missing: $VALVE_RAUC_KEYRING"
+
+	# RAUC accepts a CA bundle. Require exactly one certificate so a second,
+	# unpinned trust anchor cannot be appended to the checked PEM.
+	pem_cert_count="$(grep -c -- '-----BEGIN CERTIFICATE-----' "$VALVE_RAUC_KEYRING" || true)"
+	[[ "$pem_cert_count" == 1 ]] ||
+		die "trusted Valve RAUC keyring must contain exactly one certificate"
+	pem_cert_count="$(grep -c -- '-----END CERTIFICATE-----' "$VALVE_RAUC_KEYRING" || true)"
+	[[ "$pem_cert_count" == 1 ]] ||
+		die "trusted Valve RAUC keyring has an invalid certificate count"
+
+	fingerprint="$(openssl x509 -in "$VALVE_RAUC_KEYRING" \
+		-noout -fingerprint -sha256)" ||
+		die "could not read trusted Valve RAUC certificate"
+	fingerprint="${fingerprint#*=}"
+	[[ "${fingerprint^^}" == "$VALVE_RAUC_CERT_FINGERPRINT" ]] ||
+		die "trusted Valve RAUC certificate fingerprint does not match the pinned certificate"
+
+	printf 'Verifying Valve RAUC bundle signature...\n'
+	rauc info --keyring="$VALVE_RAUC_KEYRING" "$RAUC_FILE" ||
+		die "Valve RAUC bundle signature verification failed"
+
+	RAUC_BUNDLE_VERIFIED=true
+	printf 'Valve RAUC signature verified against pinned certificate.\n'
 }
 
 extract_rauc_index() {
+	local manifest_compatible manifest_version manifest_filename
+
+	[[ "$RAUC_BUNDLE_VERIFIED" == true ]] ||
+		die "refusing to extract RAUC metadata before signature verification"
 	require_command unsquashfs
 
 	RAUC_CONTENT_DIR="$IMAGE_DIR/rauc-content"
 	RAUC_MANIFEST="$RAUC_CONTENT_DIR/manifest.raucm"
 	RAUC_INDEX="$RAUC_CONTENT_DIR/rootfs.img.caibx"
 
+	# Never reuse extracted metadata left by an earlier bundle or failed run.
+	# These are tiny files; a fresh extraction costs very little.
+	rm -rf -- "$RAUC_CONTENT_DIR"
 	mkdir -p "$RAUC_CONTENT_DIR"
 
-	printf 'Extracting RAUC manifest and casync index...\n'
+	printf 'Extracting verified RAUC manifest and casync index...\n'
 
 	unsquashfs -f -d "$RAUC_CONTENT_DIR" \
 		"$RAUC_FILE" \
@@ -224,79 +272,177 @@ extract_rauc_index() {
 		rootfs.img.caibx ||
 		die "failed to extract RAUC metadata"
 
-	[[ -s "$RAUC_MANIFEST" ]] ||
-		die "RAUC manifest is missing"
+	[[ -s "$RAUC_MANIFEST" ]] || die "RAUC manifest is missing"
+	[[ -s "$RAUC_INDEX" ]] || die "RAUC rootfs index is missing"
 
-	[[ -s "$RAUC_INDEX" ]] ||
-		die "RAUC rootfs index is missing"
+	# Validate the signed manifest matches the selected SteamOS release.
+	manifest_compatible="$(rauc_manifest_value update compatible)"
+	manifest_version="$(rauc_manifest_value update version)"
+	manifest_filename="$(rauc_manifest_value image.rootfs filename)"
 
-	printf 'RAUC metadata extracted successfully.\n'
+	[[ "$manifest_compatible" == steamos-amd64 ]] ||
+		die "unexpected RAUC compatibility: $manifest_compatible"
+	[[ "$manifest_version" == "$SELECTED_VERSION" ]] ||
+		die "RAUC manifest version does not match selected SteamOS version"
+	[[ "$manifest_filename" == rootfs.img.caibx ]] ||
+		die "unsupported RAUC rootfs filename: $manifest_filename"
+
+	# Reject an unexpected change of the bundle between the signature check
+	# and metadata extraction (including when a cached bundle is overwritten).
+	[[ "$(sha256sum "$RAUC_FILE" | awk '{print $1}')" == "$RAUC_BUNDLE_SHA" ]] ||
+		die "RAUC bundle changed after signature verification"
+
+	printf 'Authenticated RAUC metadata extracted successfully.\n'
+}
+
+rauc_manifest_value() {
+	local section="$1" key="$2"
+	awk -F= -v wanted_section="[$section]" -v wanted_key="$key" '
+		$0 == wanted_section { active = 1; next }
+		/^\[/ { active = 0 }
+		active && $1 == wanted_key { print $2; exit }
+	' "$RAUC_MANIFEST"
+}
+
+# This local cache record is created only after casync extraction finishes.
+# It detects accidental modifications and stale cached images, but is NOT a
+# Valve-signed rootfs checksum and cannot protect against local cache tampering
+# by an actor able to modify both the image and this record.
+read_verified_casync_cache() {
+	local cache_file="$1" cache_bundle cache_index cache_root_sha
+	local cache_root_size cache_format
+
+	[[ -s "$RAW_IMAGE" && -r "$cache_file" ]] || return 1
+
+	cache_format="$(awk -F= '$1 == "format" {print $2; exit}' "$cache_file")"
+	cache_bundle="$(awk -F= '$1 == "bundle_sha256" {print $2; exit}' "$cache_file")"
+	cache_index="$(awk -F= '$1 == "index_sha256" {print $2; exit}' "$cache_file")"
+	cache_root_size="$(awk -F= '$1 == "rootfs_size" {print $2; exit}' "$cache_file")"
+	cache_root_sha="$(awk -F= '$1 == "rootfs_sha256" {print $2; exit}' "$cache_file")"
+
+	[[ "$cache_format" == 1 && "$cache_bundle" == "$RAUC_BUNDLE_SHA" &&
+		"$cache_index" == "$RAUC_INDEX_SHA" &&
+		"$cache_root_size" =~ ^[1-9][0-9]*$ &&
+		"$cache_root_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+	[[ "$(stat -c '%s' "$RAW_IMAGE")" == "$cache_root_size" ]] || return 1
+	printf '%s  %s\n' "$cache_root_sha" "$RAW_IMAGE" | sha256sum -c --status
+}
+
+write_verified_casync_cache() {
+	local cache_file="$1" root_size="$2" root_sha="$3" cache_tmp
+
+	cache_tmp="$(mktemp "${cache_file}.XXXXXX")"
+	{
+		printf 'format=1\n'
+		printf 'bundle_sha256=%s\n' "$RAUC_BUNDLE_SHA"
+		printf 'index_sha256=%s\n' "$RAUC_INDEX_SHA"
+		printf 'rootfs_size=%s\n' "$root_size"
+		printf 'rootfs_sha256=%s\n' "$root_sha"
+	} >"$cache_tmp"
+	mv -- "$cache_tmp" "$cache_file"
 }
 
 reconstruct_rauc_rootfs() {
-	local store_url expected_sha expected_size actual_size
-	local temporary_image
+	local store_url expected_sha expected_size actual_size actual_sha checksum_target
+	local temporary_image cache_file seed_file
+	local -a seed_args=()
 
+	[[ "$RAUC_BUNDLE_VERIFIED" == true ]] ||
+		die "refusing to reconstruct rootfs before RAUC signature verification"
 	require_command casync
+	require_command blkid
 
 	RAW_IMAGE="$IMAGE_DIR/rootfs.img"
-	temporary_image="${RAW_IMAGE}.part"
+	temporary_image="${RAW_IMAGE}.rebuild.part"
+	cache_file="${RAW_IMAGE}.casync-cache"
 	store_url="${RAUC_URL%.raucb}.castr"
 
-	expected_sha="$(
-		awk -F= '
-			$0 == "[image.rootfs]" { section = 1; next }
-			/^\[/ { section = 0 }
-			section && $1 == "sha256" { print $2; exit }
-		' "$RAUC_MANIFEST"
-	)"
-
-	expected_size="$(
-		awk -F= '
-			$0 == "[image.rootfs]" { section = 1; next }
-			/^\[/ { section = 0 }
-			section && $1 == "size" { print $2; exit }
-		' "$RAUC_MANIFEST"
-	)"
+	expected_sha="$(rauc_manifest_value image.rootfs sha256)"
+	expected_size="$(rauc_manifest_value image.rootfs size)"
 
 	[[ "$expected_sha" =~ ^[0-9a-fA-F]{64}$ ]] ||
-		die "invalid rootfs SHA-256 in RAUC manifest"
+		die "invalid SHA-256 in RAUC manifest"
+	[[ "$expected_size" =~ ^[1-9][0-9]*$ ]] ||
+		die "invalid size in RAUC manifest"
+	expected_sha="${expected_sha,,}"
 
-	[[ "$expected_size" =~ ^[0-9]+$ ]] ||
-		die "invalid rootfs size in RAUC manifest"
-
-	if [[ -s "$RAW_IMAGE" ]]; then
-		actual_size="$(stat -c '%s' "$RAW_IMAGE")"
-
-		if [[ "$actual_size" == "$expected_size" ]] &&
-			printf '%s  %s\n' "$expected_sha" "$RAW_IMAGE" |
-			sha256sum -c --status; then
-			printf 'Using verified cached RAUC rootfs:\n  %s\n' "$RAW_IMAGE"
-			return
-		fi
+	RAUC_INDEX_SHA="$(sha256sum "$RAUC_INDEX" | awk '{print $1}')"
+	if [[ "$(stat -c '%s' "$RAUC_INDEX")" == "$expected_size" &&
+		"$RAUC_INDEX_SHA" == "$expected_sha" ]]; then
+		checksum_target=index
+	else
+		# Older Valve bundles sign a manifest containing the raw rootfs
+		# size/hash, even though the filename names a casync index.
+		checksum_target=rootfs
 	fi
 
-	printf 'Reconstructing SteamOS rootfs using casync...\n'
-	rm -f -- "$temporary_image"
+	printf 'RAUC manifest checksum target: %s\n' "$checksum_target"
 
+	if [[ "$checksum_target" == rootfs && -s "$RAW_IMAGE" ]]; then
+		actual_size="$(stat -c '%s' "$RAW_IMAGE")"
+		if [[ "$actual_size" == "$expected_size" ]] &&
+			printf '%s  %s\n' "$expected_sha" "$RAW_IMAGE" |
+				sha256sum -c --status; then
+			printf 'Using cached rootfs verified against signed RAUC manifest:\n  %s\n' "$RAW_IMAGE"
+			return
+		fi
+	elif [[ "$checksum_target" == index ]] &&
+		read_verified_casync_cache "$cache_file"; then
+		printf 'Using cached casync rootfs (locally checked SHA-256):\n  %s\n' "$RAW_IMAGE"
+		return
+	fi
+
+	printf 'Reconstructing SteamOS rootfs using authenticated casync index...\n'
+	# An older cache without a verification record must be reconstructed once.
+	# Use it as a casync seed to avoid redownloading chunks; casync checks
+	# their content addresses against the authenticated index.
+	seed_file=""
+	if [[ -s "$RAW_IMAGE" ]]; then
+		seed_file="$RAW_IMAGE"
+	elif [[ -s "${RAW_IMAGE}.part" ]]; then
+		seed_file="${RAW_IMAGE}.part"
+	fi
+	if [[ -n "$seed_file" ]]; then
+		printf 'Using existing rootfs as casync seed:\n  %s\n' "$seed_file"
+		seed_args=("--seed=$seed_file")
+	fi
+
+	rm -f -- "$temporary_image"
 	casync extract \
+		"${seed_args[@]}" \
 		--store="$store_url" \
 		"$RAUC_INDEX" \
 		"$temporary_image" ||
 		die "casync rootfs reconstruction failed"
 
+	[[ -s "$temporary_image" ]] || die "casync produced an empty rootfs"
 	actual_size="$(stat -c '%s' "$temporary_image")"
+	[[ "$(blkid -p -s TYPE -o value "$temporary_image" 2>/dev/null)" == btrfs ]] ||
+		die "reconstructed rootfs is not recognised as Btrfs"
 
-	[[ "$actual_size" == "$expected_size" ]] ||
-		die "reconstructed rootfs size does not match RAUC manifest"
-
-	printf '%s  %s\n' "$expected_sha" "$temporary_image" |
-		sha256sum -c --status ||
-		die "reconstructed rootfs SHA-256 does not match RAUC manifest"
+	if [[ "$checksum_target" == rootfs ]]; then
+		[[ "$actual_size" == "$expected_size" ]] ||
+			die "reconstructed rootfs size does not match signed RAUC manifest"
+		printf '%s  %s\n' "$expected_sha" "$temporary_image" |
+			sha256sum -c --status ||
+			die "reconstructed rootfs SHA-256 does not match signed RAUC manifest"
+		# No local cache record needed when the signed rootfs checksum exists.
+		rm -f -- "$cache_file"
+	else
+		# The signed casync index authenticates the expected chunk hashes.
+		# There is no independent Valve-signed SHA-256 of the final rootfs.
+		actual_sha="$(sha256sum "$temporary_image" | awk '{print $1}')"
+	fi
 
 	mv -- "$temporary_image" "$RAW_IMAGE"
-
-	printf 'SteamOS rootfs reconstructed and verified:\n  %s\n' "$RAW_IMAGE"
+	if [[ "$checksum_target" == index ]]; then
+		write_verified_casync_cache "$cache_file" "$actual_size" "$actual_sha"
+		printf 'Reconstructed from signed casync index; local rootfs SHA-256: %s\n' "$actual_sha"
+		printf 'NOTE: The manifest authenticates the index, not a separate rootfs hash.\n'
+	else
+		printf 'SteamOS rootfs SHA-256 verified against signed manifest.\n'
+	fi
+	printf 'SteamOS rootfs ready:\n  %s\n' "$RAW_IMAGE"
 }
 
 attach_and_mount_image() {
@@ -585,6 +731,7 @@ main() {
 			;;
 		rauc)
 			download_rauc_bundle
+			verify_rauc_bundle
 			extract_rauc_index
 			reconstruct_rauc_rootfs
 			attach_and_mount_rauc_rootfs
