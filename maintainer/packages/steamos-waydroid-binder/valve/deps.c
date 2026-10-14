@@ -10,6 +10,7 @@
 #include <linux/sched.h>
 #include <linux/security.h>
 #include <linux/task_work.h>
+#include <linux/version.h>
 #include <linux/wait.h>
 
 #include "deps.h"
@@ -66,10 +67,17 @@ static int (*security_binder_transfer_file_ptr)(const struct cred *from,
 static int (*task_work_add_ptr)(struct task_struct *task,
 				struct callback_head *twork,
 				enum task_work_notify_mode mode);
+/* Linux 7.x renamed zap_page_range_single() and removed zap_details. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+static void (*zap_vma_range_ptr)(struct vm_area_struct *vma,
+				 unsigned long address,
+				 unsigned long size);
+#else
 static void (*zap_page_range_single_ptr)(struct vm_area_struct *vma,
 					  unsigned long address,
 					  unsigned long size,
 					  struct zap_details *details);
+#endif
 
 #define RESOLVE_FUNCTION(lookup, name)					\
 	do {								\
@@ -102,7 +110,11 @@ int binder_deps_init(void)
 	RESOLVE_FUNCTION(lookup, security_binder_transfer_binder);
 	RESOLVE_FUNCTION(lookup, security_binder_transfer_file);
 	RESOLVE_FUNCTION(lookup, task_work_add);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	RESOLVE_FUNCTION(lookup, zap_vma_range);
+#else
 	RESOLVE_FUNCTION(lookup, zap_page_range_single);
+#endif
 
 	init_ipc_ns_ptr = (struct ipc_namespace *)lookup("init_ipc_ns");
 	if (!init_ipc_ns_ptr) {
@@ -186,8 +198,16 @@ int task_work_add(struct task_struct *task, struct callback_head *twork,
 	return task_work_add_ptr(task, twork, mode);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+void zap_vma_range(struct vm_area_struct *vma, unsigned long address,
+		   unsigned long size)
+{
+	zap_vma_range_ptr(vma, address, size);
+}
+#else
 void zap_page_range_single(struct vm_area_struct *vma, unsigned long address,
 			   unsigned long size, struct zap_details *details)
 {
 	zap_page_range_single_ptr(vma, address, size, details);
 }
+#endif
