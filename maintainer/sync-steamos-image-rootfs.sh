@@ -368,7 +368,7 @@ reconstruct_rauc_rootfs() {
 
 	RAUC_INDEX_SHA="$(sha256sum "$RAUC_INDEX" | awk '{print $1}')"
 	if [[ "$(stat -c '%s' "$RAUC_INDEX")" == "$expected_size" &&
-		"$RAUC_INDEX_SHA" == "$expected_sha" ]]; then
+	"$RAUC_INDEX_SHA" == "$expected_sha" ]]; then
 		checksum_target=index
 	else
 		# Older Valve bundles sign a manifest containing the raw rootfs
@@ -382,7 +382,7 @@ reconstruct_rauc_rootfs() {
 		actual_size="$(stat -c '%s' "$RAW_IMAGE")"
 		if [[ "$actual_size" == "$expected_size" ]] &&
 			printf '%s  %s\n' "$expected_sha" "$RAW_IMAGE" |
-				sha256sum -c --status; then
+			sha256sum -c --status; then
 			printf 'Using cached rootfs verified against signed RAUC manifest:\n  %s\n' "$RAW_IMAGE"
 			return
 		fi
