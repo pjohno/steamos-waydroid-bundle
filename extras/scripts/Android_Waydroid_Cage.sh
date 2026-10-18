@@ -51,7 +51,7 @@ TARGET_CHECK="$BUNDLE/tools/check-bundle-target.sh"
 COMPATIBILITY_REPORT="$BUNDLE/tools/compatibility-report.sh"
 TARGET_ALLOW="$HOME/.local/opt/steamos-waydroid/allow-target-mismatch"
 CONFIG_DIR="$SCRIPT_DIR/config"
-RESOLUTION="$(xdpyinfo | awk '/dimensions/{print $2; exit}')"
+RESOLUTION="$(xdpyinfo | awk '/dimensions/{print $2; found=1} END {if (!found) exit 1}')"
 
 if [ ! -x "$CAGE" ] ||
 	[ ! -x "$WLR_RANDR" ] ||
