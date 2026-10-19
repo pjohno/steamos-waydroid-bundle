@@ -66,8 +66,18 @@ target_binder_state() {
 	modules_dir="$(require_target_kernel_modules_dir "$kernel_release")"
 
 	if [[ -r "$modules_dir/modules.builtin" ]] &&
-		grep -Eq '(^|/)(binder|binder_linux)\.ko$' \
+		grep -Eq '(^|/)(rust_binder|binder|binder_linux)\.ko$' \
 			"$modules_dir/modules.builtin"; then
+		printf 'builtin\n'
+		return 0
+	fi
+
+	# Fall back to the target kernel configuration if built-in
+	# module metadata does not identify the Binder implementation.
+	# Never inspect the build host's running kernel.
+	if [[ -r "$modules_dir/build/.config" ]] &&
+		grep -Eq '^CONFIG_ANDROID_BINDER_IPC(_RUST)?=y$' \
+			"$modules_dir/build/.config"; then
 		printf 'builtin\n'
 		return 0
 	fi
@@ -82,6 +92,10 @@ target_binder_state() {
 		-o -name 'binder_linux.ko.xz' \
 		-o -name 'binder_linux.ko.zst' \
 		-o -name 'binder_linux.ko.gz' \
+		-o -name 'rust_binder.ko' \
+		-o -name 'rust_binder.ko.xz' \
+		-o -name 'rust_binder.ko.zst' \
+		-o -name 'rust_binder.ko.gz' \
 		\) \
 		-print -quit |
 		grep -q .; then
