@@ -10,7 +10,7 @@ running_kernel_has_builtin_binder() {
 	local modinfo_command="${STEAMOS_WAYDROID_MODINFO:-modinfo}"
 	local modules_builtin="$modules_root/$kernel_release/modules.builtin"
 
-	for binder_module in binder_linux binder; do
+	for binder_module in rust_binder binder_linux binder; do
 		binder_filename="$($modinfo_command -k "$kernel_release" -F filename \
 			"$binder_module" 2>/dev/null || true)"
 		if [[ "$binder_filename" == "(builtin)" ]]; then
@@ -18,6 +18,13 @@ running_kernel_has_builtin_binder() {
 		fi
 	done
 
+	# Check kernel configuration when built-in module metadata is missing.
+	# /proc/config.gz describes only the currently running kernel.
+	if [[ "$kernel_release" == "$(uname -r)" && -r /proc/config.gz ]] &&
+		zgrep -Eq '^CONFIG_ANDROID_BINDER_IPC(_RUST)?=y$' /proc/config.gz; then
+		return 0
+	fi
+
 	[[ -r "$modules_builtin" ]] &&
-		grep -Eq '(^|/)(binder|binder_linux)\.ko$' "$modules_builtin"
+		grep -Eq '(^|/)(rust_binder|binder|binder_linux)\.ko$' "$modules_builtin"
 }

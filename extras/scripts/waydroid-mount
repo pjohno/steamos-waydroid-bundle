@@ -68,6 +68,23 @@ required_binder_devices_exist() {
 load_binder_module() {
 	local binder_module binder_filename modules_builtin
 
+	# Prefer the Binder implementation already active in the kernel.
+	# This supports both Rust Binder and the legacy C Binder driver.
+	# Do not load our external module if BinderFS is registered.
+	if grep -qw binder /proc/filesystems; then
+		printf 'Kernel already provides BinderFS; skipping external Binder module.\n'
+		return 0
+	fi
+
+	# Never load the external C driver over an existing Rust Binder.
+	# If Rust Binder is present but BinderFS is missing, fail safely.
+	if [[ -d /sys/module/rust_binder ]] ||
+		[[ "$(modinfo -F filename rust_binder 2>/dev/null || true)" == "(builtin)" ]] ||
+		{ [[ -r /proc/config.gz ]] &&
+			zgrep -qx 'CONFIG_ANDROID_BINDER_IPC_RUST=y' /proc/config.gz; }; then
+		binder_die "Rust Binder is present but BinderFS is unavailable; refusing to load C Binder"
+	fi
+
 	# modprobe selects modules for the running atomic SteamOS release and
 	# rejects an unusable module itself. Accept either the in-tree or bundled
 	# module name without independently comparing kernel fingerprints.
