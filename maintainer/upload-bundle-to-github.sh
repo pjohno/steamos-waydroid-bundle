@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
 require_non_root
-for command_name in gh git; do
+for command_name in gh git python3; do
 	require_command "$command_name"
 done
 
@@ -49,12 +49,18 @@ gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_REVISION" >/dev/null 2>&1 ||
 if ! gh release view "$GITHUB_RELEASE_TAG" \
 	--repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
 	printf 'Creating target-bundle Release %s...\n' "$GITHUB_RELEASE_TAG"
+	release_flags=(--latest=false)
+	if [[ "$GITHUB_RELEASE_TAG" == bundles ]]; then
+		release_flags=(--latest)
+	elif [[ "$GITHUB_RELEASE_TAG" == experimental-bundles ]]; then
+		release_flags=(--prerelease --latest=false)
+	fi
 	gh release create "$GITHUB_RELEASE_TAG" \
 		--repo "$GITHUB_REPOSITORY" \
 		--target "$SOURCE_REVISION" \
 		--title "SteamOS Waydroid target bundles" \
 		--notes "Target-specific verified SteamOS Waydroid bundles." \
-		--latest=false
+		"${release_flags[@]}"
 fi
 
 mapfile -t existing_assets < <(
@@ -76,11 +82,22 @@ gh release upload "$GITHUB_RELEASE_TAG" \
 	"${immutable_assets[@]}" \
 	--repo "$GITHUB_REPOSITORY"
 
-printf 'Updating GitHub Release catalogs...\n'
+printf 'Updating GitHub Release latest pointer...\n'
 gh release upload "$GITHUB_RELEASE_TAG" \
-	"${catalog_assets[@]}" \
+	"$PUBLISH_ROOT/$LATEST_MANIFEST_NAME" \
 	--clobber \
 	--repo "$GITHUB_REPOSITORY"
+
+printf 'Rebuilding the catalog from ALL published bundles in %s...\n' "$GITHUB_RELEASE_TAG"
+"$SCRIPT_DIR/rebuild-release-catalog.sh" \
+	--output "$PUBLISH_ROOT/$TARGETS_MANIFEST_NAME" --upload
+
+# Keep experimental releases in the background, and production marked Latest.
+if [[ "$GITHUB_RELEASE_TAG" == bundles ]]; then
+	gh release edit "$GITHUB_RELEASE_TAG" --latest --repo "$GITHUB_REPOSITORY"
+elif [[ "$GITHUB_RELEASE_TAG" == experimental-bundles ]]; then
+	gh release edit "$GITHUB_RELEASE_TAG" --prerelease --repo "$GITHUB_REPOSITORY"
+fi
 
 printf '\nGitHub bundle published:\n'
 printf '  repository: %s\n' "$GITHUB_REPOSITORY"
