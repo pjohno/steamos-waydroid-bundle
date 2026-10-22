@@ -115,17 +115,33 @@ if [[ "$BUNDLE_VERSION" == auto ]]; then
 	CURRENT_TARGET_ENVIRONMENT="$(fingerprint_value \
 		"$CURRENT_FINGERPRINT" TARGET_ENVIRONMENT_ID)"
 	CURRENT_ABI="$(fingerprint_value "$CURRENT_FINGERPRINT" ABI_SHA256)"
+	CURRENT_KERNEL="$(fingerprint_value "$CURRENT_FINGERPRINT" KERNEL_RELEASE)"
 	BUNDLE_VERSION=""
 	if fetch_file targets.manifest; then
-		BUNDLE_VERSION="$(awk -F '[=|]' -v wanted="$CURRENT_TARGET_ENVIRONMENT" \
-			'$1 == "target" && $2 == wanted {print $3; exit}' \
-			"$DOWNLOAD_ROOT/targets.manifest")"
+		# Format 3 adds kernel-specific mappings. Older format 2 catalogs
+		# remain supported through the target/ABI fallbacks below.
+		BUNDLE_VERSION="$(manifest_value "$DOWNLOAD_ROOT/targets.manifest" \
+			"target-kernel|$CURRENT_TARGET_ENVIRONMENT|$CURRENT_KERNEL")"
 		if [[ -n "$BUNDLE_VERSION" ]]; then
-			printf 'Exact bundle match found in the catalog.\n'
-		elif running_kernel_has_builtin_binder; then
-			BUNDLE_VERSION="$(awk -F '[=|]' -v wanted="$CURRENT_ABI" \
-				'$1 == "abi" && $2 == wanted {print $3; exit}' \
-				"$DOWNLOAD_ROOT/targets.manifest")"
+			printf 'Exact target and kernel match found in the catalog.\n'
+		fi
+		if [[ -z "$BUNDLE_VERSION" ]]; then
+			BUNDLE_VERSION="$(manifest_value "$DOWNLOAD_ROOT/targets.manifest" \
+				"abi-kernel|$CURRENT_ABI|$CURRENT_KERNEL")"
+			if [[ -n "$BUNDLE_VERSION" ]]; then
+				printf 'ABI and kernel match found in the catalog.\n'
+			fi
+		fi
+		if [[ -z "$BUNDLE_VERSION" ]]; then
+			BUNDLE_VERSION="$(manifest_value "$DOWNLOAD_ROOT/targets.manifest" \
+				"target|$CURRENT_TARGET_ENVIRONMENT")"
+			if [[ -n "$BUNDLE_VERSION" ]]; then
+				printf 'Exact target match found in the catalog.\n'
+			fi
+		fi
+		if [[ -z "$BUNDLE_VERSION" ]] && running_kernel_has_builtin_binder; then
+			BUNDLE_VERSION="$(manifest_value "$DOWNLOAD_ROOT/targets.manifest" \
+				"abi|$CURRENT_ABI")"
 			if [[ -n "$BUNDLE_VERSION" ]]; then
 				printf 'ABI-compatible bundle match found in the catalog.\n'
 				printf 'Userspace ABI matches and the running kernel provides Binder.\n'
