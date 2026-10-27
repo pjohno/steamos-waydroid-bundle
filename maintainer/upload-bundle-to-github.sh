@@ -89,6 +89,7 @@ gh release upload "$GITHUB_RELEASE_TAG" \
 	--repo "$GITHUB_REPOSITORY"
 
 printf 'Rebuilding the catalog from ALL published bundles in %s...\n' "$GITHUB_RELEASE_TAG"
+export GITHUB_REPOSITORY GITHUB_RELEASE_TAG
 "$SCRIPT_DIR/rebuild-release-catalog.sh" \
 	--output "$PUBLISH_ROOT/$TARGETS_MANIFEST_NAME" --upload
 
